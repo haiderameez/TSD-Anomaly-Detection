@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 from typing import List
+from datetime import datetime, timedelta
 
 from src.data_preprocessor import DataPreprocessor
 from src.unified_detector import UnifiedAnomalyDetector
@@ -19,6 +20,12 @@ ANALYSIS_END_TIME = '2004-01-19 07:59:00'
 
 def run_preprocessing(input_path: str, output_dir: str) -> (pd.DataFrame, pd.DataFrame, List[str]):
     print("Data Preprocessing")
+    
+    train_start = datetime.strptime(TRAIN_START_TIME, '%Y-%m-%d %H:%M:%S')
+    train_end = datetime.strptime(TRAIN_END_TIME, '%Y-%m-%d %H:%M:%S')
+    if train_end - train_start < timedelta(hours=72):
+        raise ValueError("Insufficient training data: A minimum of 72 hours of data is required")
+
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -36,6 +43,9 @@ def run_preprocessing(input_path: str, output_dir: str) -> (pd.DataFrame, pd.Dat
 
 def run_analysis(train_df: pd.DataFrame, analysis_df: pd.DataFrame, features: List[str]) -> pd.DataFrame:
     
+    if len(features) < 7:
+        print("WARNING: Dataset has fewer than 7 features, model results may be less reliable.\n")
+
     vae_latent_dim = max(2, min(8, len(features) // 5))
     
     detector = UnifiedAnomalyDetector(
@@ -45,8 +55,26 @@ def run_analysis(train_df: pd.DataFrame, analysis_df: pd.DataFrame, features: Li
         vae_epochs=30
     )
     
+    print("Training Model")
     detector.train(train_df, features)
+    print("Training Done\n")
+
+    print("Analyzing training period for existing anomalies")
+    train_anomaly_scores = detector.predict(train_df.copy())['Abnormality_score']
+    mean_train_score = train_anomaly_scores.mean()
+    max_train_score = train_anomaly_scores.max()
+    
+    if mean_train_score >= 10 or max_train_score >= 25:
+        print("WARNING: Anomalies detected in the training data. This may affect model performance.")
+        print(f"  - Mean Abnormality Score in Training Data: {mean_train_score:.2f} (Threshold: < 10)")
+        print(f"  - Max Abnormality Score in Training Data: {max_train_score:.2f} (Threshold: < 25)")
+        print("Proceeding with analysis...\n")
+    else:
+        print("No significant anomalies found in training data\n")
+
+    print("Predicting anomalies in analysis period")
     results = detector.predict(analysis_df)
+    print("Prediction complete\n")
 
     return results
 
